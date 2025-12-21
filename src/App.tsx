@@ -7,8 +7,10 @@ import { SignalPanel } from '@/components/SignalPanel';
 import { useLiveData } from '@/hooks/useLiveData';
 import { useScanner } from '@/hooks/useScanner';
 import { useFuturesProData } from '@/hooks/useFuturesProData';
+import { useBackendBootstrap } from '@/hooks/useBackendBootstrap';
 
 export default function App() {
+  useBackendBootstrap();
   useLiveData();
   useScanner();
   useFuturesProData();

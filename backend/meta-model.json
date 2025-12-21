@@ -1,0 +1,9 @@
+{
+  "version": "fsd-meta-v1",
+  "features": ["score", "rr", "stopPct", "atrPct", "adx", "bbBw", "emaSlope", "trend"],
+  "weights": [0, 0, 0, 0, 0, 0, 0, 0],
+  "bias": 0,
+  "means": [0, 0, 0, 0, 0, 0, 0, 0],
+  "stds": [1, 1, 1, 1, 1, 1, 1, 1],
+  "threshold": 0.4
+}

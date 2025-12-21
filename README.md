@@ -21,6 +21,14 @@ Visit the URL printed by Vite. The UI defaults to BTCUSDT, 15m, Binance public d
 npm test
 ```
 
+## Backend (headless signals)
+- Start a 24/7 signal worker: `npm run backend` (configure `.env` first).
+- API (defaults to `http://localhost:4000`): `GET /signals?symbol=BTCUSDT&timeframe=15m&limit=200`, `POST /refresh`, `GET /status`, `GET /health`.
+- Env keys: `BACKEND_SYMBOLS`, `BACKEND_TIMEFRAMES`, `BACKEND_DATA_SOURCE` (`futures|spot`), `BACKEND_GATE_MODE` (`default|aggressive|conservative`), `BACKEND_POLL_SECONDS`, `BACKEND_HISTORY_CAP`, `BACKEND_SIGNAL_STORE`, `BACKEND_DISCORD_WEBHOOK_URL`.
+- Probabilidades/EV: set `BACKEND_META_MODEL_PATH` (or `BACKEND_META_MODEL_JSON`) with the same JSON the UI model uses to attach `probability` + `evR` to every signal and send them to the Discord webhook if configured.
+- Persistencia: signals + metadata are saved to `backend/data/signals.json` (ignored by git).
+- UI hydratation: set `VITE_BACKEND_URL` so the frontend seeds from the backend history (polls every 60s) while still running live scans in-browser.
+
 ## Configuración
 - Symbols: change from the symbol dropdown (default BTCUSDT, ETHUSDT, SOLUSDT).
 - Timeframes: 1m, 3m, 5m, 15m, 1H, 4H, D, W buttons on the toolbar. Default 15m.
