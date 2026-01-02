@@ -1,6 +1,6 @@
 import { Candle, Signal, Timeframe } from '@/types';
 import { DataSource } from '@/store/useMarketStore';
-import { evaluateSignal } from '@/services/performance';
+import { ExecutionCosts, evaluateSignal } from '@/services/performance';
 
 export type AutoMuteDecision = {
   muted: boolean;
@@ -20,6 +20,7 @@ export function computeAutoMuteDecision(params: {
   maxHoldBars?: number;
   windowTrades?: number;
   minTradesToDecide?: number;
+  executionCosts?: ExecutionCosts;
 }): AutoMuteDecision {
   const {
     symbol,
@@ -30,7 +31,8 @@ export function computeAutoMuteDecision(params: {
     candles,
     maxHoldBars = 60,
     windowTrades = 20,
-    minTradesToDecide = 20
+    minTradesToDecide = 20,
+    executionCosts
   } = params;
 
   const scoped = signals
@@ -40,7 +42,7 @@ export function computeAutoMuteDecision(params: {
     .sort((a, b) => a.timestamp - b.timestamp);
 
   const evaluated = scoped
-    .map((s) => evaluateSignal(s, candles, { maxHoldBars }))
+    .map((s) => evaluateSignal(s, candles, { maxHoldBars, executionCosts }))
     .filter((t) => t.outcome !== 'open')
     .slice(-windowTrades);
 

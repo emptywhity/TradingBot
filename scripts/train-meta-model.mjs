@@ -4,6 +4,7 @@
  *
  * Usage:
  *   node scripts/train-meta-model.mjs --in fsd-signals-YYYY-MM-DD.json --out fsd-model.json
+ *   node scripts/train-meta-model.mjs --in fsd-signals.json --walkForwardFolds 4 --walkForwardTestFraction 0.15 --walkForwardMinTrainFraction 0.5 --driftWarnZ 0.5
  *
  * Notes:
  * - This script fetches candles from Binance (spot/futures) to label outcomes.
@@ -20,6 +21,12 @@ const minSignalsPerGroup = num(args.minSignalsPerGroup, 20);
 const maxHoldBars = num(args.maxHoldBars, 60);
 const lookbackCandles = num(args.lookbackCandles, 260);
 const sleepMs = num(args.sleepMs, 200);
+const walkForwardFolds = num(args.walkForwardFolds, 4);
+const walkForwardTestFraction = num(args.walkForwardTestFraction, 0.15);
+const walkForwardMinTrainFraction = num(args.walkForwardMinTrainFraction, 0.5);
+const driftWarnZ = num(args.driftWarnZ, 0.5);
+
+const TRAINING = { iters: 2000, lr: 0.15, l2: 0.02 };
 
 if (!inputPath) {
   console.error('Missing --in <signals.json>.');
@@ -55,10 +62,9 @@ if (!groups.length) {
   process.exit(1);
 }
 
-console.log(`Loaded ${cleaned.length} signals. Training on top ${groups.length} groups…`);
+console.log(`Loaded ${cleaned.length} signals. Training on top ${groups.length} groups...`);
 
-const X = [];
-const y = [];
+const rows = [];
 
 for (const g of groups) {
   const tfSec = timeframeSeconds(g.timeframe);
@@ -67,7 +73,7 @@ for (const g of groups) {
   const startMs = (minTs - lookbackCandles * tfSec) * 1000;
   const endMs = (maxTs + (maxHoldBars + 5) * tfSec) * 1000;
 
-  console.log(`\n[${g.dataSource}] ${g.symbol} ${g.timeframe} • signals=${g.signals.length} • fetching candles…`);
+  console.log(`\n[${g.dataSource}] ${g.symbol} ${g.timeframe} | signals=${g.signals.length} | fetching candles...`);
   const candles = await fetchKlinesRange({
     dataSource: g.dataSource,
     symbol: g.symbol,
@@ -123,25 +129,59 @@ for (const g of groups) {
     const vec = FEATURES.map((f) => row[f]);
     if (!vec.every(isFiniteNumber)) continue;
 
-    X.push(vec);
-    y.push(label);
+    rows.push({ x: vec, y: label, ts: s.timestamp });
     added += 1;
   }
 
-  console.log(`  candles=${candles.length} • training rows added=${added}`);
+  console.log(`  candles=${candles.length} | training rows added=${added}`);
+}
+
+const ordered = rows.sort((a, b) => a.ts - b.ts);
+const X = ordered.map((r) => r.x);
+const y = ordered.map((r) => r.y);
+
+if (!X.length) {
+  console.error('No training rows after filtering.');
+  process.exit(1);
 }
 
 if (X.length < 100) {
   console.warn(`\nWarning: only ${X.length} training rows. Results may be unstable.`);
 }
 
+if (walkForwardFolds > 0) {
+  const wf = runWalkForward(ordered, {
+    folds: walkForwardFolds,
+    testFraction: walkForwardTestFraction,
+    minTrainFraction: walkForwardMinTrainFraction,
+    driftWarnZ,
+    training: TRAINING
+  });
+  if (!wf.length) {
+    console.log('\nWalk-forward: skipped (not enough data for requested folds).');
+  } else {
+    console.log('\nWalk-forward validation:');
+    for (const row of wf) {
+      const driftFlag = row.driftAvgAbsZ >= driftWarnZ ? ' DRIFT' : '';
+      console.log(
+        `  fold ${row.fold} | train=${row.trainSize} test=${row.testSize}` +
+          ` | acc=${(row.accuracy * 100).toFixed(1)}%` +
+          ` | logloss=${row.logLoss.toFixed(4)}` +
+          ` | baseRate=${(row.baseRate * 100).toFixed(1)}%` +
+          ` | driftAvgZ=${row.driftAvgAbsZ.toFixed(2)}` +
+          ` | driftMaxZ=${row.driftMaxAbsZ.toFixed(2)}${driftFlag}`
+      );
+    }
+  }
+}
+
 console.log(`\nTraining logistic regression: rows=${X.length}, features=${FEATURES.length}`);
 
 const { means, stds, Xn } = standardize(X);
-const { weights, bias } = trainLogReg(Xn, y, { iters: 2000, lr: 0.15, l2: 0.02 });
+const { weights, bias } = trainLogReg(Xn, y, TRAINING);
 const report = evaluateModel(Xn, y, weights, bias);
 
-console.log(`Accuracy ${(report.accuracy * 100).toFixed(1)}% • LogLoss ${report.logLoss.toFixed(4)} • BaseRate ${(report.baseRate * 100).toFixed(1)}%`);
+console.log(`Accuracy ${(report.accuracy * 100).toFixed(1)}% | LogLoss ${report.logLoss.toFixed(4)} | BaseRate ${(report.baseRate * 100).toFixed(1)}%`);
 
 const model = {
   version: 'fsd-meta-v1',
@@ -154,8 +194,8 @@ const model = {
 };
 
 await fs.writeFile(outputPath, JSON.stringify(model, null, 2), 'utf-8');
-console.log(`\nSaved model → ${outputPath}`);
-console.log('Load it in the app: Signal → Stats → Model… → paste the JSON and Save model.');
+console.log(`\nSaved model -> ${outputPath}`);
+console.log('Load it in the app: Signal -> Stats -> Model -> paste the JSON and Save model.');
 
 function parseArgs(argv) {
   const out = {};
@@ -457,6 +497,73 @@ function standardize(X) {
   }
   const Xn = X.map((r) => r.map((v, j) => (v - means[j]) / stds[j]));
   return { means, stds, Xn };
+}
+
+function standardizeWith(X, means, stds) {
+  if (!X.length) return [];
+  return X.map((r) => r.map((v, j) => (v - means[j]) / (stds[j] || 1)));
+}
+
+function runWalkForward(rows, opts) {
+  const total = rows.length;
+  if (!total) return [];
+  const testSize = Math.max(50, Math.floor(total * opts.testFraction));
+  const minTrain = Math.max(Math.floor(total * opts.minTrainFraction), testSize);
+
+  const results = [];
+  let trainEnd = minTrain;
+  let fold = 1;
+  while (trainEnd + testSize <= total && fold <= opts.folds) {
+    const trainRows = rows.slice(0, trainEnd);
+    const testRows = rows.slice(trainEnd, trainEnd + testSize);
+
+    const trainX = trainRows.map((r) => r.x);
+    const trainY = trainRows.map((r) => r.y);
+    const testX = testRows.map((r) => r.x);
+    const testY = testRows.map((r) => r.y);
+
+    const { means, stds, Xn } = standardize(trainX);
+    if (!Xn.length || !testX.length) break;
+
+    const { weights, bias } = trainLogReg(Xn, trainY, opts.training);
+    const testXn = standardizeWith(testX, means, stds);
+    const metrics = evaluateModel(testXn, testY, weights, bias);
+    const drift = driftStats(testX, means, stds);
+
+    results.push({
+      fold,
+      trainSize: trainRows.length,
+      testSize: testRows.length,
+      accuracy: metrics.accuracy,
+      logLoss: metrics.logLoss,
+      baseRate: metrics.baseRate,
+      driftAvgAbsZ: drift.avgAbsZ,
+      driftMaxAbsZ: drift.maxAbsZ
+    });
+
+    trainEnd += testSize;
+    fold += 1;
+  }
+
+  return results;
+}
+
+function driftStats(X, means, stds) {
+  if (!X.length) return { avgAbsZ: 0, maxAbsZ: 0, zMeans: [] };
+  const d = means.length;
+  const sums = Array(d).fill(0);
+  const n = X.length;
+  for (const row of X) {
+    for (let j = 0; j < d; j += 1) {
+      const std = stds[j] || 1;
+      sums[j] += (row[j] - means[j]) / std;
+    }
+  }
+  const zMeans = sums.map((s) => s / n);
+  const absMeans = zMeans.map((v) => Math.abs(v));
+  const avgAbsZ = average(absMeans);
+  const maxAbsZ = absMeans.length ? Math.max(...absMeans) : 0;
+  return { avgAbsZ, maxAbsZ, zMeans };
 }
 
 function sigmoid(z) {

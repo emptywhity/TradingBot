@@ -8,8 +8,10 @@ import { useLiveData } from '@/hooks/useLiveData';
 import { useScanner } from '@/hooks/useScanner';
 import { useFuturesProData } from '@/hooks/useFuturesProData';
 import { useBackendBootstrap } from '@/hooks/useBackendBootstrap';
+import { useAuth } from '@/hooks/useAuth';
 
 export default function App() {
+  useAuth();
   useBackendBootstrap();
   useLiveData();
   useScanner();

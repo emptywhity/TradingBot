@@ -2,11 +2,13 @@ import { useEffect, useRef } from 'react';
 import { RealDataAdapter } from '@/adapters/exchangeAdapter';
 import { DEFAULT_STRATEGY } from '@/config/defaults';
 import { generateSignals } from '@/services/signalEngine';
+import { buildDynamicGate } from '@/services/dynamicGate';
 import { useMarketStore } from '@/store/useMarketStore';
 import { Candle, Opportunity, Timeframe } from '@/types';
 
 const SCAN_TIMEFRAMES: Timeframe[] = ['1m', '3m', '5m', '15m'];
 const HTF_TIMEFRAMES: Timeframe[] = ['1H', '4H'];
+const dynamicGateEnabled = import.meta.env.VITE_DYNAMIC_GATE !== 'false';
 
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = [];
@@ -97,13 +99,19 @@ export function useScanner() {
             const candles = await adapter.getOHLCV({ symbol, timeframe: tf, limit: 350 });
             scanned += 1;
             if (candles.length === 0) continue;
+            const { gate: effectiveGate } = buildDynamicGate({
+              candles,
+              baseGate: gate,
+              atrPeriod: DEFAULT_STRATEGY.atrPeriod,
+              enabled: dynamicGateEnabled
+            });
             const sigs = generateSignals({
               symbol,
               timeframe: tf,
               candles,
               htfCandles,
               history: [],
-              gate,
+              gate: effectiveGate,
               settings: DEFAULT_STRATEGY,
               trendMode
             });

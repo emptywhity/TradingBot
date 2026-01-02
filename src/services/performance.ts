@@ -9,6 +9,11 @@ export type EvaluatedTrade = {
   barsHeld: number;
 };
 
+export type ExecutionCosts = {
+  feeBps: number;
+  slippageBps: number;
+};
+
 export type PerformanceSummary = {
   totalSignals: number;
   evaluatedTrades: number;
@@ -40,9 +45,10 @@ function firstIndexAtOrAfter(times: number[], ts: number): number {
 export function evaluateSignal(
   signal: Signal,
   candles: Candle[],
-  opts?: { maxHoldBars?: number }
+  opts?: { maxHoldBars?: number; executionCosts?: ExecutionCosts }
 ): EvaluatedTrade {
   const maxHoldBars = Math.max(1, Math.floor(opts?.maxHoldBars ?? 60));
+  const executionCosts = opts?.executionCosts;
   if (candles.length === 0) return { signal, outcome: 'open', r: 0, barsHeld: 0 };
 
   const times = candles.map((c) => c.time);
@@ -73,10 +79,12 @@ export function evaluateSignal(
     const tpHit = isLong ? c.high >= tp1 : c.low <= tp1;
     // Conservative: if both hit within the same candle, assume stop first.
     if (stopHit) {
-      return { signal, outcome: 'stop', r: -1, barsHeld: i - start };
+      const costR = costInR(entry, stop, risk, executionCosts);
+      return { signal, outcome: 'stop', r: -1 - costR, barsHeld: i - start };
     }
     if (tpHit) {
-      return { signal, outcome: 'tp1', r: signal.rr, barsHeld: i - start };
+      const costR = costInR(entry, tp1, risk, executionCosts);
+      return { signal, outcome: 'tp1', r: signal.rr - costR, barsHeld: i - start };
     }
   }
 
@@ -84,17 +92,22 @@ export function evaluateSignal(
   if (endIdx > start) {
     const exit = candles[endIdx].close;
     const move = isLong ? exit - entry : entry - exit;
-    const r = move / (risk || 1);
+    const costR = costInR(entry, exit, risk, executionCosts);
+    const r = move / (risk || 1) - costR;
     return { signal, outcome: endIdx === candles.length - 1 ? 'open' : 'timeout', r, barsHeld: endIdx - start };
   }
 
   return { signal, outcome: 'open', r: 0, barsHeld: 0 };
 }
 
-export function summarizePerformance(signals: Signal[], candles: Candle[], opts?: { maxHoldBars?: number }): PerformanceSummary {
+export function summarizePerformance(
+  signals: Signal[],
+  candles: Candle[],
+  opts?: { maxHoldBars?: number; executionCosts?: ExecutionCosts }
+): PerformanceSummary {
   const maxHoldBars = opts?.maxHoldBars ?? 60;
   const sorted = [...signals].sort((a, b) => a.timestamp - b.timestamp);
-  const evaluated: EvaluatedTrade[] = sorted.map((s) => evaluateSignal(s, candles, { maxHoldBars }));
+  const evaluated: EvaluatedTrade[] = sorted.map((s) => evaluateSignal(s, candles, opts));
 
   const counts = { tp1: 0, stop: 0, timeout: 0, open: 0 };
   let grossProfit = 0;
@@ -146,4 +159,14 @@ export function summarizePerformance(signals: Signal[], candles: Candle[], opts?
     maxDrawdownR: evaluatedTrades ? maxDd : null,
     avgBarsHeld: evaluatedTrades ? sumBars / evaluatedTrades : null
   };
+}
+
+function costInR(entry: number, exit: number, risk: number, costs?: ExecutionCosts): number {
+  if (!costs) return 0;
+  const feeBps = Number.isFinite(costs.feeBps) ? costs.feeBps : 0;
+  const slippageBps = Number.isFinite(costs.slippageBps) ? costs.slippageBps : 0;
+  const totalBps = feeBps + slippageBps;
+  if (totalBps <= 0 || !Number.isFinite(entry) || !Number.isFinite(exit) || risk <= 0) return 0;
+  const costAbs = (entry + exit) * (totalBps / 10000);
+  return costAbs / risk;
 }

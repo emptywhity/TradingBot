@@ -14,6 +14,7 @@ import { computeAutoMuteDecision } from '@/services/autoMute';
 import { loadMetaModel, predictWithMetaModel } from '@/services/metaModel';
 import { computeRTargets, simulateTradePlan } from '@/services/tradePlan';
 import { loadFuturesProHistory, premiumPct as historyPremiumPct, sampleAtOrBefore } from '@/services/futuresProHistory';
+import { getExecutionCosts } from '@/config/executionCosts';
 
 type TabKey = 'overview' | 'plan' | 'stats' | 'scanner' | 'futures' | 'recent';
 
@@ -51,7 +52,8 @@ export function SignalPanel() {
     setTimeframe,
     setDataSource,
     futuresPro,
-    heikin
+    heikin,
+    symbols
   } = useMarketStore((s) => ({
     role: s.role,
     symbol: s.symbol,
@@ -76,7 +78,8 @@ export function SignalPanel() {
     setTimeframe: s.setTimeframe,
     setDataSource: s.setDataSource,
     futuresPro: s.futuresPro,
-    heikin: s.heikin
+    heikin: s.heikin,
+    symbols: s.symbols
   }));
 
   const hasVip = role !== 'standard';
@@ -84,6 +87,7 @@ export function SignalPanel() {
   const [tab, setTab] = useState<TabKey>('overview');
   const [modelOpen, setModelOpen] = useState(false);
   const [modelRev, setModelRev] = useState(0);
+  const executionCosts = useMemo(() => getExecutionCosts(), []);
 
   useEffect(() => {
     if (!hasVip && (tab === 'stats' || tab === 'scanner' || tab === 'futures')) setTab('overview');
@@ -115,9 +119,10 @@ export function SignalPanel() {
       dataSource,
       gateMode,
       signals,
-      candles
+      candles,
+      executionCosts
     });
-  }, [autoMuteEnabled, candles, dataSource, gateMode, isAdmin, signals, symbol, timeframe]);
+  }, [autoMuteEnabled, candles, dataSource, executionCosts, gateMode, isAdmin, signals, symbol, timeframe]);
 
   const metaModel = useMemo(() => (isAdmin ? loadMetaModel() : null), [isAdmin, modelRev]);
   const modelPred = useMemo(() => {
@@ -148,7 +153,7 @@ export function SignalPanel() {
               title={disabled ? 'VIP only' : undefined}
             >
               {t.label}
-              {t.vip ? <span className="ml-1 text-[10px] text-slate-400">(VIP)</span> : null}
+              {t.vip ? <span className="ml-1 text-[10px] text-slate-400">(PRO)</span> : null}
             </button>
           );
         })}
@@ -261,6 +266,7 @@ export function SignalPanel() {
         {tab === 'recent' ? (
           <RecentTab
             signals={signals}
+            allowedSymbols={symbols}
             onPick={(s) => {
               setDataSource(s.dataSource ?? 'futures');
               setSymbol(s.symbol);
@@ -713,8 +719,11 @@ function FuturesTab({
   );
 }
 
-function RecentTab({ signals, onPick }: { signals: Signal[]; onPick: (s: Signal) => void }) {
-  const recent = useMemo(() => [...signals].slice(-30).reverse(), [signals]);
+function RecentTab({ signals, allowedSymbols, onPick }: { signals: Signal[]; allowedSymbols: string[]; onPick: (s: Signal) => void }) {
+  const recent = useMemo(() => {
+    const scoped = allowedSymbols.length ? signals.filter((s) => allowedSymbols.includes(s.symbol)) : signals;
+    return [...scoped].slice(-30).reverse();
+  }, [allowedSymbols, signals]);
   return (
     <div>
       <h4 className="text-xs uppercase text-slate-500 mb-2">Recent</h4>
@@ -756,8 +765,8 @@ function RecentTab({ signals, onPick }: { signals: Signal[]; onPick: (s: Signal)
 function VipUpsell() {
   return (
     <div className="border border-slate-800 rounded bg-slate-900/20 p-3 text-xs text-slate-400">
-      <div className="text-slate-200 font-medium">VIP feature</div>
-      <div className="mt-1">Enable VIP to unlock risk sizing, stats, scanner opportunities, and futures pro context.</div>
+      <div className="text-slate-200 font-medium">Pro feature</div>
+      <div className="mt-1">Upgrade to Pro to unlock risk sizing, stats, scanner opportunities, and futures pro context.</div>
     </div>
   );
 }

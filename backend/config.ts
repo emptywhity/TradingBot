@@ -13,6 +13,7 @@ export type BackendConfig = {
   dataSource: DataSource;
   gateMode: 'default' | 'aggressive' | 'conservative';
   gate: QualityGateConfig;
+  dynamicGate: boolean;
   pollSeconds: number;
   historyCap: number;
   persistPath: string;
@@ -30,6 +31,7 @@ export function loadConfig(): BackendConfig {
   const timeframes = parseTimeframes(process.env.BACKEND_TIMEFRAMES) ?? (['5m', '15m', '1H', '4H'] as Timeframe[]);
   const dataSource = (process.env.BACKEND_DATA_SOURCE as DataSource) ?? 'futures';
   const gateMode = (process.env.BACKEND_GATE_MODE as BackendConfig['gateMode']) ?? 'default';
+  const dynamicGate = optionalEnv('BACKEND_DYNAMIC_GATE') !== 'false';
   const pollSeconds = Math.max(5, intFromEnv('BACKEND_POLL_SECONDS', 60));
   const historyCap = Math.max(100, intFromEnv('BACKEND_HISTORY_CAP', 2000));
   const persistPath = path.resolve(process.cwd(), optionalEnv('BACKEND_SIGNAL_STORE') ?? 'backend/data/signals.json');
@@ -48,6 +50,7 @@ export function loadConfig(): BackendConfig {
     dataSource,
     gateMode,
     gate: gateForMode(gateMode),
+    dynamicGate,
     pollSeconds,
     historyCap,
     persistPath,

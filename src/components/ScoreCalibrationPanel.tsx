@@ -3,6 +3,7 @@ import { clsx } from 'clsx';
 import { Candle, Signal, Timeframe } from '@/types';
 import { DataSource } from '@/store/useMarketStore';
 import { evaluateSignal } from '@/services/performance';
+import { getExecutionCosts } from '@/config/executionCosts';
 
 type Row = {
   label: string;
@@ -38,6 +39,7 @@ export function ScoreCalibrationPanel({
   candles: Candle[];
   maxHoldBars?: number;
 }) {
+  const executionCosts = useMemo(() => getExecutionCosts(), []);
   const evaluated = useMemo(() => {
     const scoped = signals
       .filter((s) => s.symbol === symbol && s.timeframe === timeframe)
@@ -46,12 +48,12 @@ export function ScoreCalibrationPanel({
       .sort((a, b) => a.timestamp - b.timestamp);
 
     const trades = scoped
-      .map((s) => evaluateSignal(s, candles, { maxHoldBars }))
+      .map((s) => evaluateSignal(s, candles, { maxHoldBars, executionCosts }))
       .filter((t) => t.outcome !== 'open');
 
     // Keep the most recent evaluated trades to avoid skew from stale/out-of-range data.
     return trades.slice(-120);
-  }, [candles, dataSource, gateMode, maxHoldBars, signals, symbol, timeframe]);
+  }, [candles, dataSource, executionCosts, gateMode, maxHoldBars, signals, symbol, timeframe]);
 
   const rows: Row[] = useMemo(() => {
     if (!evaluated.length) return [];

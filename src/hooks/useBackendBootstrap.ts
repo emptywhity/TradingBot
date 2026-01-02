@@ -1,20 +1,18 @@
 import { useEffect } from 'react';
 import { useMarketStore } from '@/store/useMarketStore';
 import { Signal } from '@/types';
-
-const backendUrl = import.meta.env.VITE_BACKEND_URL;
+import { apiFetch, getBackendUrl } from '@/services/authClient';
 
 export function useBackendBootstrap() {
   const pushSignals = useMarketStore((s) => s.pushSignals);
 
   useEffect(() => {
-    if (!backendUrl) return;
+    if (!getBackendUrl()) return;
     let cancelled = false;
-    const base = backendUrl.replace(/\/$/, '');
 
     const load = async () => {
       try {
-        const res = await fetch(`${base}/signals?limit=500`);
+        const res = await apiFetch('/signals?limit=500');
         if (!res.ok) throw new Error(`backend ${res.status}`);
         const json = await res.json();
         if (cancelled) return;

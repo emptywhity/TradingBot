@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { Candle, FuturesProData, Opportunity, OrderBook, Signal, Ticker, Timeframe } from '@/types';
-import { DEFAULT_GATE, DEFAULT_SYMBOLS, DEFAULT_TIMEFRAME, TIMEFRAMES } from '@/config/defaults';
+import { DEFAULT_GATE, DEFAULT_SYMBOLS, DEFAULT_TIMEFRAME, FREE_SYMBOLS, TIMEFRAMES } from '@/config/defaults';
 import { QualityGateConfig } from '@/types';
 
 export type DataSource = 'futures' | 'spot';
@@ -76,6 +76,7 @@ function persistPrefs(patch: Partial<StoredPrefs>) {
 }
 
 interface MarketState {
+  user?: { id: string; email: string; role: 'standard' | 'vip' | 'admin'; vipExpiresAt?: number; createdAt: number };
   symbols: string[];
   timeframes: Timeframe[];
   symbol: string;
@@ -109,6 +110,7 @@ interface MarketState {
   setSymbol: (s: string) => void;
   setTimeframe: (tf: Timeframe) => void;
   setRole: (r: MarketState['role']) => void;
+  setUser: (u: MarketState['user']) => void;
   setAutoMuteEnabled: (v: boolean) => void;
   setMlFilterEnabled: (v: boolean) => void;
   toggleVwap: () => void;
@@ -137,9 +139,10 @@ const initialSignals = loadStoredSignals();
 const initialPrefs = loadPrefs();
 
 export const useMarketStore = create<MarketState>((set) => ({
-  symbols: DEFAULT_SYMBOLS,
+  user: undefined,
+  symbols: FREE_SYMBOLS,
   timeframes: TIMEFRAMES,
-  symbol: DEFAULT_SYMBOLS[0],
+  symbol: FREE_SYMBOLS[0],
   timeframe: DEFAULT_TIMEFRAME,
   role: 'standard',
   autoMuteEnabled: initialPrefs.autoMuteEnabled ?? true,
@@ -167,10 +170,26 @@ export const useMarketStore = create<MarketState>((set) => ({
   lastCandleTs: undefined,
   diagnostics: undefined,
   feedInfo: undefined,
-  setSymbol: (symbol) => set({ symbol }),
+  setSymbol: (symbol) =>
+    set((state) => {
+      const allowed = state.symbols.includes(symbol);
+      return allowed ? { symbol } : state;
+    }),
   setTimeframe: (timeframe) => set({ timeframe }),
   setGateMode: (mode) => set({ gateMode: mode, gate: gateForMode(mode) }),
-  setRole: (role) => set({ role }),
+  setRole: (role) =>
+    set((state) => {
+      const nextSymbols = role === 'standard' ? FREE_SYMBOLS : DEFAULT_SYMBOLS;
+      const nextSymbol = nextSymbols.includes(state.symbol) ? state.symbol : nextSymbols[0];
+      return { role, symbols: nextSymbols, symbol: nextSymbol };
+    }),
+  setUser: (user) =>
+    set((state) => {
+      const role = user?.role ?? 'standard';
+      const nextSymbols = role === 'standard' ? FREE_SYMBOLS : DEFAULT_SYMBOLS;
+      const nextSymbol = nextSymbols.includes(state.symbol) ? state.symbol : nextSymbols[0];
+      return { user, role, symbols: nextSymbols, symbol: nextSymbol };
+    }),
   setAutoMuteEnabled: (autoMuteEnabled) => {
     persistPrefs({ autoMuteEnabled });
     set({ autoMuteEnabled });

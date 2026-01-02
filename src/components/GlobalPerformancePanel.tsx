@@ -3,6 +3,7 @@ import { clsx } from 'clsx';
 import { RealDataAdapter } from '@/adapters/exchangeAdapter';
 import { timeframeSeconds } from '@/services/signalEngine';
 import { summarizePerformance } from '@/services/performance';
+import { getExecutionCosts } from '@/config/executionCosts';
 import { DataSource, useMarketStore } from '@/store/useMarketStore';
 import { Signal, Timeframe } from '@/types';
 
@@ -76,6 +77,7 @@ export function GlobalPerformancePanel({ signals }: { signals: Signal[] }) {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [refreshId, setRefreshId] = useState(0);
+  const executionCosts = useMemo(() => getExecutionCosts(), []);
 
   const maxHoldBars = 60;
   const maxGroups = 20;
@@ -115,7 +117,7 @@ export function GlobalPerformancePanel({ signals }: { signals: Signal[] }) {
         const computed = await mapLimit(groups, 3, async (g) => {
           const desired = Math.ceil((windowDays * 86400) / timeframeSeconds(g.timeframe) + maxHoldBars + 10);
           const candles = await getAdapter(g.dataSource).getOHLCV({ symbol: g.symbol, timeframe: g.timeframe, limit: desired });
-          const summary = summarizePerformance(g.signals, candles, { maxHoldBars });
+          const summary = summarizePerformance(g.signals, candles, { maxHoldBars, executionCosts });
           return {
             key: `${g.dataSource}|${g.symbol}|${g.timeframe}`,
             symbol: g.symbol,
@@ -141,7 +143,7 @@ export function GlobalPerformancePanel({ signals }: { signals: Signal[] }) {
     return () => {
       cancelled = true;
     };
-  }, [groups, maxHoldBars, role, windowDays, refreshId]);
+  }, [executionCosts, groups, maxHoldBars, role, windowDays, refreshId]);
 
   const filteredRows = useMemo(() => {
     const q = query.trim().toUpperCase();

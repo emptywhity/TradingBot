@@ -2,6 +2,7 @@ import { RealDataAdapter } from '@/adapters/exchangeAdapter';
 import { DEFAULT_STRATEGY } from '@/config/defaults';
 import { MetaModelV1, predictWithMetaModel } from '@/services/metaModel';
 import { generateSignals, timeframeSeconds } from '@/services/signalEngine';
+import { buildDynamicGate } from '@/services/dynamicGate';
 import { adx, atr, bollingerBandwidth, ema } from '@/utils/indicators';
 import { Candle, QualityGateConfig, Signal, Timeframe } from '@/types';
 import { BackendConfig } from './config';
@@ -99,13 +100,20 @@ export class SignalWorker {
     const candles = await this.adapter.getOHLCV({ symbol, timeframe, limit: this.config.ohlcvLimit });
     if (!candles.length) return [];
 
+    const { gate: effectiveGate } = buildDynamicGate({
+      candles,
+      baseGate: this.config.gate,
+      atrPeriod: DEFAULT_STRATEGY.atrPeriod,
+      enabled: this.config.dynamicGate
+    });
+
     const diagnostics = buildDiagnostics(
       candles,
       htfCandles,
       timeframe,
       this.history,
       symbol,
-      this.config.gate
+      effectiveGate
     );
 
     const generated = generateSignals({
@@ -114,7 +122,7 @@ export class SignalWorker {
       candles,
       htfCandles,
       history: this.history,
-      gate: this.config.gate,
+      gate: effectiveGate,
       trendMode: this.config.trendMode,
       settings: DEFAULT_STRATEGY
     });

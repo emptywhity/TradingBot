@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { clsx } from 'clsx';
 import { Candle, Signal } from '@/types';
 import { summarizePerformance } from '@/services/performance';
+import { getExecutionCosts } from '@/config/executionCosts';
 
 type GateKey = 'default' | 'aggressive' | 'conservative' | 'unknown';
 
@@ -41,20 +42,21 @@ export function PerformancePanel({
   const nowSec = Math.floor(Date.now() / 1000);
   const windowStart = nowSec - windowDays * 86400;
   const maxHoldBars = 60;
+  const executionCosts = useMemo(() => getExecutionCosts(), []);
 
   const rows = useMemo(() => {
     const scoped = signals.filter((s) => s.symbol === symbol && s.timeframe === timeframe && s.timestamp >= windowStart);
     return GATES.map((gate) => {
       const bucket = scoped.filter((s) => (gate === 'unknown' ? !s.gateMode : s.gateMode === gate));
-      const summary = summarizePerformance(bucket, candles, { maxHoldBars });
+      const summary = summarizePerformance(bucket, candles, { maxHoldBars, executionCosts });
       return { gate, summary };
     });
-  }, [candles, signals, symbol, timeframe, windowStart]);
+  }, [candles, executionCosts, signals, symbol, timeframe, windowStart]);
 
   const total = useMemo(() => {
     const scoped = signals.filter((s) => s.symbol === symbol && s.timeframe === timeframe && s.timestamp >= windowStart);
-    return summarizePerformance(scoped, candles, { maxHoldBars });
-  }, [candles, signals, symbol, timeframe, windowStart]);
+    return summarizePerformance(scoped, candles, { maxHoldBars, executionCosts });
+  }, [candles, executionCosts, signals, symbol, timeframe, windowStart]);
 
   return (
     <div className="mt-4">

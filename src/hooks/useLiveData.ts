@@ -5,11 +5,15 @@ import { generateSignals, timeframeSeconds } from '@/services/signalEngine';
 import { notifySignal } from '@/services/alerting';
 import { computeAutoMuteDecision } from '@/services/autoMute';
 import { loadMetaModel, predictWithMetaModel } from '@/services/metaModel';
+import { buildDynamicGate } from '@/services/dynamicGate';
+import { getExecutionCosts } from '@/config/executionCosts';
 import { useMarketStore } from '@/store/useMarketStore';
-import { QualityGateConfig, Signal, Timeframe } from '@/types';
+import { QualityGateConfig, Signal, Timeframe, Ticker } from '@/types';
 import { adx, atr, bollingerBandwidth, ema } from '@/utils/indicators';
 
 const webhookUrl = import.meta.env.VITE_DISCORD_WEBHOOK_URL;
+const dynamicGateEnabled = import.meta.env.VITE_DYNAMIC_GATE !== 'false';
+const executionCosts = getExecutionCosts();
 
 export function useLiveData() {
   const {
@@ -119,6 +123,7 @@ export function useLiveData() {
       cb: (t) => {
         setTicker(t);
         setFeedInfo(adapter.getLastSources());
+        updateLastCandleWithTicker(t);
       }
     });
     const unsubBook = adapter.subscribeOrderBook({
@@ -143,15 +148,43 @@ export function useLiveData() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [htfCandles, symbol, timeframe, dataSource]);
 
+  function updateLastCandleWithTicker(t: Ticker) {
+    const list = candlesRef.current;
+    if (!list.length) return;
+    if (!Number.isFinite(t.last)) return;
+    const last = list[list.length - 1];
+    const tfSec = timeframeSeconds(timeframe);
+    const nowSec = Math.floor((t.timestamp ?? Date.now()) / 1000);
+    if (nowSec < last.time || nowSec >= last.time + tfSec) return;
+    if (t.last === last.close) return;
+    const next = [
+      ...list.slice(0, -1),
+      {
+        ...last,
+        close: t.last,
+        high: Math.max(last.high, t.last),
+        low: Math.min(last.low, t.last)
+      }
+    ];
+    candlesRef.current = next;
+    setCandles(next);
+  }
+
   const evaluateSignals = (latest: typeof candles) => {
-    const diag = buildDiagnostics(latest, htfCandles, timeframe, signalsRef.current, symbol, gate);
+    const { gate: effectiveGate } = buildDynamicGate({
+      candles: latest,
+      baseGate: gate,
+      atrPeriod: DEFAULT_STRATEGY.atrPeriod,
+      enabled: dynamicGateEnabled
+    });
+    const diag = buildDiagnostics(latest, htfCandles, timeframe, signalsRef.current, symbol, effectiveGate);
     const newSignals = generateSignals({
       symbol,
       timeframe,
       candles: latest,
       htfCandles,
       history: signalsRef.current,
-      gate,
+      gate: effectiveGate,
       trendMode,
       settings: DEFAULT_STRATEGY
     });
@@ -166,7 +199,8 @@ export function useLiveData() {
           dataSource,
           gateMode,
           signals: signalsRef.current,
-          candles: latest
+          candles: latest,
+          executionCosts
         });
         mutedByStats = decision.muted;
         if (mutedByStats) {

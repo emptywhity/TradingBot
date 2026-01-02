@@ -1,6 +1,7 @@
 import { QualityGateConfig, StrategySettings, Timeframe } from '@/types';
 
 export const DEFAULT_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT', 'TAOUSDT'];
+export const FREE_SYMBOLS = ['BTCUSDT', 'ETHUSDT'];
 export const DEFAULT_TIMEFRAME: Timeframe = '15m';
 export const TIMEFRAMES: Timeframe[] = ['1m', '3m', '5m', '15m', '1H', '4H', 'D', 'W'];
 
