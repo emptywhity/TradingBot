@@ -15,6 +15,7 @@ import { loadMetaModel, predictWithMetaModel } from '@/services/metaModel';
 import { computeRTargets, simulateTradePlan } from '@/services/tradePlan';
 import { loadFuturesProHistory, premiumPct as historyPremiumPct, sampleAtOrBefore } from '@/services/futuresProHistory';
 import { getExecutionCosts } from '@/config/executionCosts';
+import { filterStoppedSignals } from '@/services/signalVisibility';
 
 type TabKey = 'overview' | 'plan' | 'stats' | 'scanner' | 'futures' | 'recent';
 
@@ -102,7 +103,8 @@ export function SignalPanel() {
     );
     const refPrice = candles.at(-1)?.close ?? ticker?.last;
     if (!refPrice || !Number.isFinite(refPrice)) return scoped;
-    return scoped.filter((s) => isSignalSane(s, refPrice));
+    const sane = scoped.filter((s) => isSignalSane(s, refPrice));
+    return filterStoppedSignals(sane, candles);
   }, [candles, dataSource, signals, symbol, ticker, timeframe]);
 
   const lastSignal = useMemo(() => signalsForView.at(-1), [signalsForView]);
@@ -110,6 +112,41 @@ export function SignalPanel() {
   const htfBias = useMemo(() => buildHtfBias(htfCandles), [htfCandles]);
   const cooldownLabel = useMemo(() => formatCooldown(diagnostics?.cooldownSecs), [diagnostics?.cooldownSecs]);
   const whyNot = diagnostics?.reasons ?? [];
+
+  const liveStatus = useMemo(() => {
+    if (!lastSignal || !candles.length) return null;
+    const emaValues = ema(candles.map((c) => c.close), DEFAULT_STRATEGY.emaPeriod);
+    const tpMultipliers = tpMultipliersForTimeframe(lastSignal.timeframe);
+    const plan = simulateTradePlan(lastSignal, candles, {
+      emaValues,
+      tpMultipliers,
+      confirmBars: 2,
+      maxHoldBars: 240,
+      requireTpForExit: true
+    });
+
+    const statusLabel =
+      plan.status === 'stop'
+        ? 'STOP'
+        : plan.status === 'exit'
+        ? 'EXIT'
+        : plan.tpsHit > 0
+        ? `TP${plan.tpsHit}`
+        : 'OPEN';
+    const statusTone = plan.status === 'stop' ? 'stop' : plan.status === 'exit' ? 'exit' : plan.tpsHit > 0 ? 'tp' : 'open';
+
+    const targets = plan.targets;
+    const nextIndex = plan.tpsHit < targets.length ? plan.tpsHit : -1;
+    const nextTarget = nextIndex >= 0 ? { ...targets[nextIndex], index: nextIndex + 1 } : null;
+    const lastPrice = candles.at(-1)?.close ?? ticker?.last ?? lastSignal.entry;
+    const progressPct = nextTarget ? computeTargetProgress(lastSignal, lastPrice, nextTarget.price) : null;
+    const events = [
+      { label: 'Signal', time: lastSignal.timestamp, type: 'signal' as const },
+      ...plan.events.map((e) => ({ label: e.label, time: e.time, type: e.type }))
+    ];
+
+    return { statusLabel, statusTone, nextTarget, progressPct, events };
+  }, [candles, lastSignal, ticker]);
 
   const autoMuteDecision = useMemo(() => {
     if (!isAdmin || !autoMuteEnabled || !candles.length) return null;
@@ -169,6 +206,7 @@ export function SignalPanel() {
             diagnostics={diagnostics}
             cooldownLabel={cooldownLabel}
             htfBias={htfBias}
+            liveStatus={liveStatus}
           />
         ) : null}
 
@@ -299,7 +337,8 @@ function Overview({
   whyNot,
   diagnostics,
   cooldownLabel,
-  htfBias
+  htfBias,
+  liveStatus
 }: {
   symbol: string;
   timeframe: Timeframe;
@@ -312,9 +351,17 @@ function Overview({
     emaSlope?: number;
     trend?: string;
     cooldownSecs?: number;
+    rangePos?: number;
   };
   cooldownLabel: string;
   htfBias: Record<Timeframe, 'up' | 'down' | 'neutral' | 'unknown'>;
+  liveStatus?: {
+    statusLabel: string;
+    statusTone: 'open' | 'tp' | 'stop' | 'exit';
+    nextTarget: { r: number; price: number; index: number } | null;
+    progressPct: number | null;
+    events: Array<{ label: string; time: number; type: 'signal' | 'tp' | 'stop' | 'exit' }>;
+  } | null;
 }) {
   const stopPct = useMemo(() => {
     if (!lastSignal) return NaN;
@@ -395,8 +442,52 @@ function Overview({
           <Metric label="EMA slope" value={Number.isFinite(diagnostics?.emaSlope) ? `${signed(diagnostics!.emaSlope!, 2)}%` : '—'} />
           <Metric label="Cooldown" value={cooldownLabel} />
           <Metric label="Trend" value={diagnostics?.trend ? diagnostics.trend : '—'} />
+          <Metric
+            label="Range pos"
+            value={Number.isFinite(diagnostics?.rangePos) ? `${(diagnostics!.rangePos! * 100).toFixed(0)}%` : '—'}
+          />
         </div>
       </div>
+
+      {lastSignal && liveStatus ? (
+        <div className="mt-4 border border-slate-800 rounded bg-slate-900/20 p-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs uppercase text-slate-500">Live status</div>
+            <span className={clsx('text-[11px] px-2 py-0.5 rounded border', statusToneClass(liveStatus.statusTone))}>
+              {liveStatus.statusLabel}
+            </span>
+          </div>
+
+          {liveStatus.nextTarget ? (
+            <div className="mt-2 text-[11px] text-slate-400">
+              Next target: TP{liveStatus.nextTarget.index} @ {fmtPrice(liveStatus.nextTarget.price)}{' '}
+              {Number.isFinite(liveStatus.progressPct) ? `(${liveStatus.progressPct!.toFixed(0)}% to target)` : ''}
+            </div>
+          ) : (
+            <div className="mt-2 text-[11px] text-slate-400">Trade closed.</div>
+          )}
+
+          {Number.isFinite(liveStatus.progressPct) ? (
+            <div className="mt-2 h-1 rounded bg-slate-800/70 overflow-hidden">
+              <div
+                className="h-full bg-emerald-500/80"
+                style={{ width: `${clampPct(liveStatus.progressPct!)}%` }}
+              />
+            </div>
+          ) : null}
+
+          {liveStatus.events.length ? (
+            <div className="mt-3 space-y-1 text-[11px] text-slate-300">
+              {liveStatus.events.map((e, idx) => (
+                <div key={`${e.type}-${e.time}-${idx}`} className="flex items-center justify-between gap-2">
+                  <span className={clsx('text-slate-300', eventToneClass(e.type))}>{e.label}</span>
+                  <span className="text-slate-500">{ageLabel(e.time)} ago</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="mt-4">
         <h4 className="text-xs uppercase text-slate-500 mb-1">HTF bias</h4>
@@ -424,7 +515,7 @@ function TradeTab({
   const viewCandles = useMemo(() => (heikin ? heikinAshi(candles) : candles), [candles, heikin]);
   const emaValues = useMemo(() => ema(viewCandles.map((c) => c.close), DEFAULT_STRATEGY.emaPeriod), [viewCandles]);
   const tpMultipliers = useMemo(
-    () => ((lastSignal?.timeframe === '1m' || lastSignal?.timeframe === '3m') ? [1.5, 3, 5, 8] : [1, 2, 3, 4]),
+    () => tpMultipliersForTimeframe(lastSignal?.timeframe),
     [lastSignal?.timeframe]
   );
   const targets = useMemo(() => (lastSignal ? computeRTargets(lastSignal, tpMultipliers) : []), [lastSignal, tpMultipliers]);
@@ -722,7 +813,7 @@ function FuturesTab({
 function RecentTab({ signals, allowedSymbols, onPick }: { signals: Signal[]; allowedSymbols: string[]; onPick: (s: Signal) => void }) {
   const recent = useMemo(() => {
     const scoped = allowedSymbols.length ? signals.filter((s) => allowedSymbols.includes(s.symbol)) : signals;
-    return [...scoped].slice(-30).reverse();
+    return [...filterStoppedSignals(scoped)].slice(-30).reverse();
   }, [allowedSymbols, signals]);
   return (
     <div>
@@ -818,6 +909,41 @@ function buildHtfBias(htfCandles: Record<Timeframe, import('@/types').Candle[]>)
     out[tf] = lastClose > lastEma ? 'up' : lastClose < lastEma ? 'down' : 'neutral';
   }
   return out;
+}
+
+function tpMultipliersForTimeframe(timeframe?: Timeframe): number[] {
+  if (timeframe === '1m' || timeframe === '3m') return [1.5, 3, 5, 8];
+  return [1, 2, 3, 4];
+}
+
+function computeTargetProgress(signal: Signal, lastPrice: number, targetPrice: number): number | null {
+  if (!Number.isFinite(lastPrice) || !Number.isFinite(targetPrice)) return null;
+  const entry = signal.entry;
+  if (!Number.isFinite(entry) || entry <= 0) return null;
+  const denom = signal.side === 'long' ? targetPrice - entry : entry - targetPrice;
+  if (!Number.isFinite(denom) || denom <= 0) return null;
+  const numer = signal.side === 'long' ? lastPrice - entry : entry - lastPrice;
+  const pct = (numer / denom) * 100;
+  return clampPct(pct);
+}
+
+function clampPct(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, value));
+}
+
+function statusToneClass(tone: 'open' | 'tp' | 'stop' | 'exit') {
+  if (tone === 'stop') return 'text-bear border-rose-900/60 bg-rose-950/20';
+  if (tone === 'exit') return 'text-violet-200 border-violet-900/60 bg-violet-950/20';
+  if (tone === 'tp') return 'text-bull border-emerald-900/60 bg-emerald-950/20';
+  return 'text-sky-200 border-sky-900/60 bg-sky-950/20';
+}
+
+function eventToneClass(type: 'signal' | 'tp' | 'stop' | 'exit') {
+  if (type === 'stop') return 'text-bear';
+  if (type === 'exit') return 'text-violet-200';
+  if (type === 'tp') return 'text-bull';
+  return 'text-sky-200';
 }
 
 function isSignalSane(signal: Signal, referencePrice: number): boolean {

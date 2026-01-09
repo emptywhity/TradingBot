@@ -25,8 +25,9 @@ export interface SignalEngineInput {
 export function generateSignals(input: SignalEngineInput): Signal[] {
   const { candles, settings } = input;
   if (candles.length < settings.emaPeriod + 5) return [];
+  const rangePos = rangePosition(candles, settings.rangeLookback);
   if (input.trendMode) {
-    return generateTrendSignal(input);
+    return generateTrendSignal(input, rangePos);
   }
   const atrValues = atrFn(candles, settings.atrPeriod);
   const emaValues = ema(candles.map((c) => c.close), settings.emaPeriod);
@@ -57,10 +58,15 @@ export function generateSignals(input: SignalEngineInput): Signal[] {
         : last.high >= zone.bottom && last.high <= zone.top;
     if (!inZone) return;
     const rejection = hasRejectionWick(last, zone.type);
-    // Looser alignment: permit neutral HTF (only block if clearly opposite)
-    const aligned = zone.type === 'demand' ? trend !== 'short' : trend !== 'long';
-    if (!rejection || !aligned) return;
+    // Strict alignment: only trade with HTF trend unless at range extremes.
+    const aligned = zone.type === 'demand' ? trend === 'long' : trend === 'short';
+    const allowCounter =
+      rangePos !== null &&
+      ((zone.type === 'demand' && rangePos <= settings.rangeLow) ||
+        (zone.type === 'supply' && rangePos >= settings.rangeHigh));
+    if (!rejection || (!aligned && !allowCounter)) return;
     const side = zone.type === 'demand' ? 'long' : 'short';
+    if (!rangeAllowsSide(side, rangePos, settings)) return;
     const { entry, stop, tp1, rr, stopDistancePct } = buildStops(last, zone, atr, input.gate.stopAtrMult);
     const reasons = buildReasons({
       side,
@@ -69,7 +75,8 @@ export function generateSignals(input: SignalEngineInput): Signal[] {
       rr,
       stopDistancePct,
       adx,
-      emaSlope: emaSlope(emaValues, settings.emaPeriod)
+      emaSlope: emaSlope(emaValues, settings.emaPeriod),
+      rangePos
     });
     const candidate: SignalCandidate = {
       symbol: input.symbol,
@@ -97,33 +104,39 @@ export function generateSignals(input: SignalEngineInput): Signal[] {
     const breakoutShort = bandOk && last.close < dc.lower;
     if (breakoutLong || breakoutShort) {
       const side = breakoutLong ? 'long' : 'short';
-      const stop =
-        side === 'long'
-          ? Math.min(last.low, dc.mid) - atr * input.gate.stopAtrMult
-          : Math.max(last.high, dc.mid) + atr * input.gate.stopAtrMult;
-      const entry = last.close;
-      const distance = Math.abs(entry - stop);
-      const tp1 = side === 'long' ? entry + distance * 2 : entry - distance * 2;
-      const candidate: SignalCandidate = {
-        symbol: input.symbol,
-        timeframe: input.timeframe,
-        side,
-        entry,
-        stop,
-        tp1,
-        rr: 2,
-        score: scoreSignal({
-          trendAligned: trend === (side === 'long' ? 'long' : 'short'),
+      if (rangeAllowsSide(side, rangePos, settings)) {
+        const stop =
+          side === 'long'
+            ? Math.min(last.low, dc.mid) - atr * input.gate.stopAtrMult
+            : Math.max(last.high, dc.mid) + atr * input.gate.stopAtrMult;
+        const entry = last.close;
+        const distance = Math.abs(entry - stop);
+        const tp1 = side === 'long' ? entry + distance * 2 : entry - distance * 2;
+        const candidate: SignalCandidate = {
+          symbol: input.symbol,
+          timeframe: input.timeframe,
+          side,
+          entry,
+          stop,
+          tp1,
           rr: 2,
-          stopDistancePct: (distance / entry) * 100,
-          adx
-        }),
-        reasons: ['Squeeze + Donchian breakout', `Bandwidth ${squeeze.toFixed(2)}%`],
-        timestamp: last.time,
-        zoneType: breakoutLong ? 'demand' : 'supply'
-      };
-      if (passesQualityGate(candidate, last, atr, undefined, input)) {
-        candidates.push(candidate);
+          score: scoreSignal({
+            trendAligned: trend === (side === 'long' ? 'long' : 'short'),
+            rr: 2,
+            stopDistancePct: (distance / entry) * 100,
+            adx
+          }),
+          reasons: [
+            'Squeeze + Donchian breakout',
+            `Bandwidth ${squeeze.toFixed(2)}%`,
+            rangePos === null ? 'Range pos n/a' : `Range pos ${(rangePos * 100).toFixed(0)}%`
+          ],
+          timestamp: last.time,
+          zoneType: breakoutLong ? 'demand' : 'supply'
+        };
+        if (passesQualityGate(candidate, last, atr, undefined, input)) {
+          candidates.push(candidate);
+        }
       }
     }
   }
@@ -131,7 +144,7 @@ export function generateSignals(input: SignalEngineInput): Signal[] {
   return dedupeNewSignals(candidates, input.history);
 }
 
-function generateTrendSignal(input: SignalEngineInput): Signal[] {
+function generateTrendSignal(input: SignalEngineInput, rangePos: number | null): Signal[] {
   const { candles, htfCandles, history, gate, settings } = input;
   const trend = trendDirection(htfCandles, settings.emaPeriod);
   if (trend === 'neutral') return [];
@@ -145,6 +158,7 @@ function generateTrendSignal(input: SignalEngineInput): Signal[] {
   if (adxVal < 12) return [];
   const atr = atrArray.at(-1) ?? 0;
   const side: 'long' | 'short' = trend === 'long' ? 'long' : 'short';
+  if (!rangeAllowsSide(side, rangePos, settings)) return [];
   const stopAtrMult = 2.2; // wider than 1.5 to avoid noise on small TFs
   const tpAtrMult = stopAtrMult * 2; // keep RR ~2 for the first partial
   const stop = side === 'long' ? last.close - atr * stopAtrMult : last.close + atr * stopAtrMult;
@@ -189,7 +203,12 @@ function generateTrendSignal(input: SignalEngineInput): Signal[] {
       stopDistancePct: distancePct,
       adx: adxVal
     }),
-    reasons: [`Trend ${trend}`, `ATR stop ${distancePct.toFixed(2)}%`, `RR ${rr.toFixed(2)}`],
+    reasons: [
+      `Trend ${trend}`,
+      `ATR stop ${distancePct.toFixed(2)}%`,
+      `RR ${rr.toFixed(2)}`,
+      rangePos === null ? 'Range pos n/a' : `Range pos ${(rangePos * 100).toFixed(0)}%`
+    ],
     timestamp: last.time,
     zoneType: side === 'long' ? 'demand' : 'supply'
   };
@@ -306,6 +325,7 @@ function buildReasons(input: {
   stopDistancePct: number;
   adx: number;
   emaSlope: number;
+  rangePos: number | null;
 }): string[] {
   const reasons = [
     `HTF trend ${input.trend}`,
@@ -313,7 +333,8 @@ function buildReasons(input: {
     `RR ${input.rr.toFixed(2)}`,
     `Stop ${input.stopDistancePct.toFixed(2)}%`,
     `ADX ${input.adx.toFixed(1)}`,
-    `EMA slope ${input.emaSlope.toFixed(2)}%`
+    `EMA slope ${input.emaSlope.toFixed(2)}%`,
+    input.rangePos === null ? 'Range pos n/a' : `Range pos ${(input.rangePos * 100).toFixed(0)}%`
   ];
   if (input.side === 'long') reasons.push('Rejection wick at demand');
   if (input.side === 'short') reasons.push('Rejection wick at supply');
@@ -351,4 +372,31 @@ export function timeframeSeconds(tf: Timeframe): number {
     W: 604800
   };
   return map[tf];
+}
+
+function rangePosition(candles: Candle[], lookback: number): number | null {
+  if (!Number.isFinite(lookback) || lookback <= 1) return null;
+  const slice = candles.slice(-lookback);
+  if (slice.length < 2) return null;
+  let low = Infinity;
+  let high = -Infinity;
+  for (const c of slice) {
+    if (Number.isFinite(c.low)) low = Math.min(low, c.low);
+    if (Number.isFinite(c.high)) high = Math.max(high, c.high);
+  }
+  if (!Number.isFinite(low) || !Number.isFinite(high) || high <= low) return null;
+  const last = candles.at(-1);
+  if (!last || !Number.isFinite(last.close)) return null;
+  return (last.close - low) / (high - low);
+}
+
+function rangeAllowsSide(
+  side: 'long' | 'short',
+  rangePos: number | null,
+  settings: StrategySettings
+): boolean {
+  if (rangePos === null) return true;
+  if (side === 'long' && rangePos >= settings.rangeHigh) return false;
+  if (side === 'short' && rangePos <= settings.rangeLow) return false;
+  return true;
 }

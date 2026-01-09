@@ -4,7 +4,7 @@ import { Signal } from '@/types';
 import { apiFetch, getBackendUrl } from '@/services/authClient';
 
 export function useBackendBootstrap() {
-  const pushSignals = useMarketStore((s) => s.pushSignals);
+  const upsertSignals = useMarketStore((s) => s.upsertSignals);
 
   useEffect(() => {
     if (!getBackendUrl()) return;
@@ -17,14 +17,7 @@ export function useBackendBootstrap() {
         const json = await res.json();
         if (cancelled) return;
         const fetched = Array.isArray(json?.signals) ? (json.signals as Signal[]) : [];
-        if (!fetched.length) return;
-        const existingKeys = new Set(
-          useMarketStore
-            .getState()
-            .signals.map((s) => `${s.symbol}-${s.timeframe}-${s.side}-${s.timestamp}`)
-        );
-        const fresh = fetched.filter((s) => !existingKeys.has(`${s.symbol}-${s.timeframe}-${s.side}-${s.timestamp}`));
-        if (fresh.length) pushSignals(fresh);
+        if (fetched.length) upsertSignals(fetched);
       } catch (err) {
         console.warn('[backend] failed to load signals', err);
       }
@@ -36,5 +29,5 @@ export function useBackendBootstrap() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [pushSignals]);
+  }, [upsertSignals]);
 }

@@ -60,6 +60,9 @@ export interface Signal {
   zoneType: ZoneType;
   gateMode?: 'default' | 'aggressive' | 'conservative';
   dataSource?: 'futures' | 'spot';
+  outcome?: 'tp1' | 'stop' | 'timeout' | 'open';
+  outcomeAt?: number;
+  barsHeld?: number;
 }
 
 export interface SignalCandidate extends Omit<Signal, 'id'> {}
@@ -87,6 +90,9 @@ export interface StrategySettings {
   minBandwidth: number;
   enableSqueeze: boolean;
   htfTimeframes: Timeframe[];
+  rangeLookback: number;
+  rangeLow: number;
+  rangeHigh: number;
 }
 
 export interface SignalState {

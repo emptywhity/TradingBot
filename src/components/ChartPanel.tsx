@@ -19,6 +19,7 @@ import { computeSessionVolumeProfile } from '@/utils/volumeProfile';
 import { Signal, Timeframe } from '@/types';
 import { timeframeSeconds } from '@/services/signalEngine';
 import { simulateTradePlan } from '@/services/tradePlan';
+import { filterStoppedSignals } from '@/services/signalVisibility';
 
 export function ChartPanel() {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -71,7 +72,8 @@ export function ChartPanel() {
       );
       const refPrice = candles.at(-1)?.close ?? ticker?.last;
       if (!refPrice || !Number.isFinite(refPrice)) return scoped;
-      return scoped.filter((s) => isSignalSane(s, refPrice));
+      const sane = scoped.filter((s) => isSignalSane(s, refPrice));
+      return filterStoppedSignals(sane, candles);
     },
     [signals, symbol, timeframe, dataSource, candles, ticker]
   );

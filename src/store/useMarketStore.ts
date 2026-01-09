@@ -17,6 +17,7 @@ interface Diagnostics {
   bb?: number;
   trend?: string;
   emaSlope?: number;
+  rangePos?: number;
 }
 
 function loadStoredSignals(): Signal[] {
@@ -131,6 +132,7 @@ interface MarketState {
   setTicker: (t: Ticker | undefined) => void;
   toggleHeikin: () => void;
   pushSignals: (s: Signal[]) => void;
+  upsertSignals: (s: Signal[]) => void;
   setDiagnostics: (d: Diagnostics | undefined) => void;
   setFeedInfo: (info: MarketState['feedInfo']) => void;
 }
@@ -221,6 +223,35 @@ export const useMarketStore = create<MarketState>((set) => ({
       return {
         signals: nextSignals,
         lastSignal: signals.at(-1) ?? state.lastSignal
+      };
+    }),
+  upsertSignals: (signals) =>
+    set((state) => {
+      if (!signals.length) return state;
+      const nextSignals = [...state.signals];
+      const index = new Map(nextSignals.map((s, i) => [`${s.symbol}-${s.timeframe}-${s.side}-${s.timestamp}`, i]));
+      let changed = false;
+      for (const s of signals) {
+        const key = `${s.symbol}-${s.timeframe}-${s.side}-${s.timestamp}`;
+        const at = index.get(key);
+        if (at === undefined) {
+          index.set(key, nextSignals.length);
+          nextSignals.push(s);
+          changed = true;
+        } else {
+          const merged = { ...nextSignals[at], ...s };
+          if (merged !== nextSignals[at]) {
+            nextSignals[at] = merged;
+            changed = true;
+          }
+        }
+      }
+      if (!changed) return state;
+      const trimmed = nextSignals.slice(-SIGNALS_CAP);
+      persistSignals(trimmed);
+      return {
+        signals: trimmed,
+        lastSignal: trimmed.at(-1) ?? state.lastSignal
       };
     }),
   setDiagnostics: (diagnostics) => set({ diagnostics }),
