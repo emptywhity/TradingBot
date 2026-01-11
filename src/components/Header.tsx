@@ -2,7 +2,7 @@ import React from 'react';
 import { useMarketStore } from '@/store/useMarketStore';
 
 export function Header() {
-  const { symbol, timeframe, ticker, dataSource, lastCandleTs, orderBook, feedInfo, gateMode } = useMarketStore((s) => ({
+  const { symbol, timeframe, ticker, dataSource, lastCandleTs, orderBook, feedInfo, gateMode, noviceMode } = useMarketStore((s) => ({
     symbol: s.symbol,
     timeframe: s.timeframe,
     ticker: s.ticker,
@@ -10,7 +10,8 @@ export function Header() {
     lastCandleTs: s.lastCandleTs,
     orderBook: s.orderBook,
     feedInfo: s.feedInfo,
-    gateMode: s.gateMode
+    gateMode: s.gateMode,
+    noviceMode: s.noviceMode
   }));
   const last = ticker?.last;
   const spread = ticker ? ticker.ask - ticker.bid : undefined;
@@ -34,7 +35,7 @@ export function Header() {
         <Info label="Last" value={last !== undefined ? last.toFixed(2) : '—'} />
         <Info label="Spread" value={spread !== undefined ? spread.toFixed(2) : '—'} />
         <Info label="Last candle" value={lastCandleLabel} />
-        <Info label="Order book" value={obLabel} />
+        {!noviceMode ? <Info label="Order book" value={obLabel} /> : null}
         <Info label="Sources" value={sourceLine || '—'} />
       </div>
     </header>

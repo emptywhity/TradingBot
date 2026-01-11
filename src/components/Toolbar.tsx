@@ -14,6 +14,8 @@ export function Toolbar() {
     heikin,
     toggleHeikin,
     role,
+    noviceMode,
+    setNoviceMode,
     showVwap,
     toggleVwap,
     showKeyLevels,
@@ -36,6 +38,8 @@ export function Toolbar() {
     heikin: s.heikin,
     toggleHeikin: s.toggleHeikin,
     role: s.role,
+    noviceMode: s.noviceMode,
+    setNoviceMode: s.setNoviceMode,
     showVwap: s.showVwap,
     toggleVwap: s.toggleVwap,
     showKeyLevels: s.showKeyLevels,
@@ -51,6 +55,7 @@ export function Toolbar() {
   }));
 
   const [accountOpen, setAccountOpen] = useState(false);
+  const showAdvanced = role !== 'standard' && !noviceMode;
 
   return (
     <>
@@ -110,7 +115,7 @@ export function Toolbar() {
           ))}
         </div>
         <div className="ml-auto flex items-center gap-2">
-          {role !== 'standard' && (
+          {showAdvanced && (
             <>
               <label className="flex items-center gap-1 text-sm text-slate-300">
                 <input type="checkbox" checked={showVwap} onChange={toggleVwap} />
@@ -130,9 +135,15 @@ export function Toolbar() {
               </label>
             </>
           )}
+          {!noviceMode ? (
+            <label className="flex items-center gap-2 text-sm text-slate-300">
+              <input type="checkbox" checked={heikin} onChange={toggleHeikin} />
+              Heikin Ashi
+            </label>
+          ) : null}
           <label className="flex items-center gap-2 text-sm text-slate-300">
-            <input type="checkbox" checked={heikin} onChange={toggleHeikin} />
-            Heikin Ashi
+            <input type="checkbox" checked={noviceMode} onChange={(e) => setNoviceMode(e.target.checked)} />
+            Novice mode
           </label>
           <button
             type="button"

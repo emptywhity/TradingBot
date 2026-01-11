@@ -9,6 +9,7 @@ import { useScanner } from '@/hooks/useScanner';
 import { useFuturesProData } from '@/hooks/useFuturesProData';
 import { useBackendBootstrap } from '@/hooks/useBackendBootstrap';
 import { useAuth } from '@/hooks/useAuth';
+import { useMarketStore } from '@/store/useMarketStore';
 
 export default function App() {
   useAuth();
@@ -16,12 +17,13 @@ export default function App() {
   useLiveData();
   useScanner();
   useFuturesProData();
+  const noviceMode = useMarketStore((s) => s.noviceMode);
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 px-4 py-4">
       <Header />
       <Toolbar />
-      <div className="grid grid-cols-1 lg:grid-cols-[320px,1fr,320px] gap-4">
-        <OrderBookPanel />
+      <div className={noviceMode ? 'grid grid-cols-1 lg:grid-cols-[1fr,320px] gap-4' : 'grid grid-cols-1 lg:grid-cols-[320px,1fr,320px] gap-4'}>
+        {!noviceMode ? <OrderBookPanel /> : null}
         <ChartPanel />
         <SignalPanel />
       </div>

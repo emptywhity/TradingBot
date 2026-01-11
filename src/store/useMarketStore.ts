@@ -48,6 +48,7 @@ function persistSignals(signals: Signal[]) {
 type StoredPrefs = {
   autoMuteEnabled?: boolean;
   mlFilterEnabled?: boolean;
+  noviceMode?: boolean;
 };
 
 function loadPrefs(): StoredPrefs {
@@ -59,7 +60,8 @@ function loadPrefs(): StoredPrefs {
     if (!json || typeof json !== 'object') return {};
     return {
       autoMuteEnabled: typeof (json as any).autoMuteEnabled === 'boolean' ? (json as any).autoMuteEnabled : undefined,
-      mlFilterEnabled: typeof (json as any).mlFilterEnabled === 'boolean' ? (json as any).mlFilterEnabled : undefined
+      mlFilterEnabled: typeof (json as any).mlFilterEnabled === 'boolean' ? (json as any).mlFilterEnabled : undefined,
+      noviceMode: typeof (json as any).noviceMode === 'boolean' ? (json as any).noviceMode : undefined
     };
   } catch {
     return {};
@@ -83,6 +85,7 @@ interface MarketState {
   symbol: string;
   timeframe: Timeframe;
   role: 'standard' | 'vip' | 'admin';
+  noviceMode: boolean;
   autoMuteEnabled: boolean;
   mlFilterEnabled: boolean;
   showVwap: boolean;
@@ -112,6 +115,7 @@ interface MarketState {
   setTimeframe: (tf: Timeframe) => void;
   setRole: (r: MarketState['role']) => void;
   setUser: (u: MarketState['user']) => void;
+  setNoviceMode: (v: boolean) => void;
   setAutoMuteEnabled: (v: boolean) => void;
   setMlFilterEnabled: (v: boolean) => void;
   toggleVwap: () => void;
@@ -147,6 +151,7 @@ export const useMarketStore = create<MarketState>((set) => ({
   symbol: FREE_SYMBOLS[0],
   timeframe: DEFAULT_TIMEFRAME,
   role: 'standard',
+  noviceMode: initialPrefs.noviceMode ?? false,
   autoMuteEnabled: initialPrefs.autoMuteEnabled ?? true,
   mlFilterEnabled: initialPrefs.mlFilterEnabled ?? false,
   showVwap: false,
@@ -192,6 +197,10 @@ export const useMarketStore = create<MarketState>((set) => ({
       const nextSymbol = nextSymbols.includes(state.symbol) ? state.symbol : nextSymbols[0];
       return { user, role, symbols: nextSymbols, symbol: nextSymbol };
     }),
+  setNoviceMode: (noviceMode) => {
+    persistPrefs({ noviceMode });
+    set({ noviceMode });
+  },
   setAutoMuteEnabled: (autoMuteEnabled) => {
     persistPrefs({ autoMuteEnabled });
     set({ autoMuteEnabled });

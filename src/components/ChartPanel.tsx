@@ -52,7 +52,7 @@ export function ChartPanel() {
     volume: number;
   } | null>(null);
 
-  const { candles, ticker, heikin, symbol, timeframe, dataSource, signals, showVwap, showKeyLevels, showVolumeProfile } = useMarketStore((s) => ({
+  const { candles, ticker, heikin, symbol, timeframe, dataSource, signals, showVwap, showKeyLevels, showVolumeProfile, noviceMode } = useMarketStore((s) => ({
     candles: s.candles,
     ticker: s.ticker,
     heikin: s.heikin,
@@ -62,8 +62,13 @@ export function ChartPanel() {
     signals: s.signals,
     showVwap: s.showVwap,
     showKeyLevels: s.showKeyLevels,
-    showVolumeProfile: s.showVolumeProfile
+    showVolumeProfile: s.showVolumeProfile,
+    noviceMode: s.noviceMode
   }));
+
+  const showVwapEnabled = showVwap && !noviceMode;
+  const showKeyLevelsEnabled = showKeyLevels && !noviceMode;
+  const showVolumeProfileEnabled = showVolumeProfile && !noviceMode;
 
   const signalsForView = useMemo(
     () => {
@@ -395,7 +400,7 @@ export function ChartPanel() {
         writeHoverText(formatHoverLine(latestHoverSnapshotRef.current, timeframeRef.current));
       }
     }
-  }, [candles, heikin, lastSignal, signalsForView, showVwap, showKeyLevels, showVolumeProfile]);
+  }, [candles, heikin, lastSignal, signalsForView, showVwapEnabled, showKeyLevelsEnabled, showVolumeProfileEnabled]);
 
   useEffect(() => {
     if (!ticker || !Number.isFinite(ticker.last)) return;
@@ -627,7 +632,7 @@ export function ChartPanel() {
 
   const plotVWAP = (data: typeof candles) => {
     if (!vwapSeriesRef.current) return;
-    if (!showVwap || data.length === 0) {
+    if (!showVwapEnabled || data.length === 0) {
       vwapSeriesRef.current.setData([]);
       return;
     }
@@ -653,7 +658,7 @@ export function ChartPanel() {
     if (!candleSeriesRef.current) return;
     keyLinesRef.current.forEach((line) => candleSeriesRef.current?.removePriceLine(line));
     keyLinesRef.current = [];
-    if (!showKeyLevels || data.length === 0) return;
+    if (!showKeyLevelsEnabled || data.length === 0) return;
     const last = data.at(-1)!;
     const lastDate = new Date(last.time * 1000);
     const lastWeek = getWeekNumber(lastDate);
@@ -690,7 +695,7 @@ export function ChartPanel() {
     if (!candleSeriesRef.current) return;
     vpLinesRef.current.forEach((line) => candleSeriesRef.current?.removePriceLine(line));
     vpLinesRef.current = [];
-    if (!showVolumeProfile || data.length === 0) return;
+    if (!showVolumeProfileEnabled || data.length === 0) return;
 
     const profile = computeSessionVolumeProfile(data, 40);
     if (!profile) return;

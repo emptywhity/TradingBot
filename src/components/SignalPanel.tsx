@@ -54,7 +54,8 @@ export function SignalPanel() {
     setDataSource,
     futuresPro,
     heikin,
-    symbols
+    symbols,
+    noviceMode
   } = useMarketStore((s) => ({
     role: s.role,
     symbol: s.symbol,
@@ -80,7 +81,8 @@ export function SignalPanel() {
     setDataSource: s.setDataSource,
     futuresPro: s.futuresPro,
     heikin: s.heikin,
-    symbols: s.symbols
+    symbols: s.symbols,
+    noviceMode: s.noviceMode
   }));
 
   const hasVip = role !== 'standard';
@@ -93,6 +95,9 @@ export function SignalPanel() {
   useEffect(() => {
     if (!hasVip && (tab === 'stats' || tab === 'scanner' || tab === 'futures')) setTab('overview');
   }, [hasVip, tab]);
+  useEffect(() => {
+    if (noviceMode && tab !== 'overview') setTab('overview');
+  }, [noviceMode, tab]);
 
   const signalsForView = useMemo(() => {
     const scoped = signals.filter(
@@ -174,29 +179,45 @@ export function SignalPanel() {
         <span className="text-xs text-slate-500">Informational only</span>
       </div>
 
-      <div className="flex items-center gap-1 flex-wrap mb-2">
-        {TABS.map((t) => {
-          const disabled = Boolean(t.vip) && !hasVip;
-          return (
-            <button
-              key={t.key}
-              type="button"
-              onClick={() => !disabled && setTab(t.key)}
-              className={clsx(
-                'px-2 py-1 rounded text-[11px] border transition select-none',
-                tab === t.key ? 'bg-slate-800 text-white border-slate-700' : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-600',
-                disabled && 'opacity-40 cursor-not-allowed hover:border-slate-800'
-              )}
-              title={disabled ? 'VIP only' : undefined}
-            >
-              {t.label}
-              {t.vip ? <span className="ml-1 text-[10px] text-slate-400">(PRO)</span> : null}
-            </button>
-          );
-        })}
-      </div>
+      {!noviceMode ? (
+        <div className="flex items-center gap-1 flex-wrap mb-2">
+          {TABS.map((t) => {
+            const disabled = Boolean(t.vip) && !hasVip;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => !disabled && setTab(t.key)}
+                className={clsx(
+                  'px-2 py-1 rounded text-[11px] border transition select-none',
+                  tab === t.key ? 'bg-slate-800 text-white border-slate-700' : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-600',
+                  disabled && 'opacity-40 cursor-not-allowed hover:border-slate-800'
+                )}
+                title={disabled ? 'VIP only' : undefined}
+              >
+                {t.label}
+                {t.vip ? <span className="ml-1 text-[10px] text-slate-400">(PRO)</span> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
 
       <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+        {noviceMode ? (
+          <NoviceOverview
+            symbol={symbol}
+            timeframe={timeframe}
+            lastSignal={lastSignal}
+            diagnostics={diagnostics}
+            whyNot={whyNot}
+            cooldownLabel={cooldownLabel}
+            gateMode={gateMode}
+            onSetTimeframe={(tf) => setTimeframe(tf)}
+          />
+        ) : null}
+        {!noviceMode ? (
+          <>
         {tab === 'overview' ? (
           <Overview
             symbol={symbol}
@@ -312,6 +333,8 @@ export function SignalPanel() {
             }}
           />
         ) : null}
+          </>
+        ) : null}
       </div>
 
       <p className="text-[10px] mt-2 text-slate-500">
@@ -396,7 +419,7 @@ function Overview({
               <Metric label="Stop %" value={Number.isFinite(stopPct) ? `${stopPct.toFixed(2)}%` : '—'} />
               <Metric label="RR (to 2R)" value={fmtNum(lastSignal.rr, 2)} />
               <Metric label="Score" value={fmtNum(lastSignal.score, 0)} />
-              <Metric label="Gate" value={(lastSignal.gateMode ?? 'default').toString()} />
+              <Metric label="Gate" value={(lastSignal.gateMode ?? 'default').toString()} hint="quality filter" />
             </div>
             <div className="mt-2 text-[11px] text-slate-500">
               Trade plan: scale out at TP1-TP4 (R-multiples) and exit on EMA flip after TP1.
@@ -436,8 +459,8 @@ function Overview({
       <div className="mt-4">
         <h4 className="text-xs uppercase text-slate-500 mb-1">Quick metrics</h4>
         <div className="grid grid-cols-2 gap-2">
-          <Metric label="ATR%" value={Number.isFinite(diagnostics?.atrPct) ? `${diagnostics!.atrPct!.toFixed(2)}%` : '—'} />
-          <Metric label="ADX" value={Number.isFinite(diagnostics?.adx) ? diagnostics!.adx!.toFixed(2) : '—'} />
+          <Metric label="ATR%" value={Number.isFinite(diagnostics?.atrPct) ? `${diagnostics!.atrPct!.toFixed(2)}%` : '—'} hint="volatility" />
+          <Metric label="ADX" value={Number.isFinite(diagnostics?.adx) ? diagnostics!.adx!.toFixed(2) : '—'} hint="trend strength" />
           <Metric label="BB bw" value={Number.isFinite(diagnostics?.bb) ? `${diagnostics!.bb!.toFixed(2)}%` : '—'} />
           <Metric label="EMA slope" value={Number.isFinite(diagnostics?.emaSlope) ? `${signed(diagnostics!.emaSlope!, 2)}%` : '—'} />
           <Metric label="Cooldown" value={cooldownLabel} />
@@ -495,6 +518,178 @@ function Overview({
           {DEFAULT_STRATEGY.htfTimeframes.map((tf) => (
             <BiasPill key={tf} tf={tf} bias={htfBias[tf] ?? 'unknown'} />
           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NoviceOverview({
+  symbol,
+  timeframe,
+  lastSignal,
+  diagnostics,
+  whyNot,
+  cooldownLabel,
+  gateMode,
+  onSetTimeframe
+}: {
+  symbol: string;
+  timeframe: Timeframe;
+  lastSignal?: Signal;
+  diagnostics?: {
+    atrPct?: number;
+    adx?: number;
+    bb?: number;
+    emaSlope?: number;
+    trend?: string;
+    cooldownSecs?: number;
+    rangePos?: number;
+  };
+  whyNot: string[];
+  cooldownLabel: string;
+  gateMode: 'default' | 'aggressive' | 'conservative';
+  onSetTimeframe: (tf: Timeframe) => void;
+}) {
+  const [showWhyNot, setShowWhyNot] = useState(false);
+  const [accountUsd, setAccountUsd] = useState(1000);
+
+  const stopPct = useMemo(() => {
+    if (!lastSignal) return NaN;
+    const entry = lastSignal.entry;
+    const stop = lastSignal.stop;
+    if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(stop)) return NaN;
+    return (Math.abs(entry - stop) / entry) * 100;
+  }, [lastSignal]);
+
+  const confidence = useMemo(() => confidenceFromScore(lastSignal?.score), [lastSignal?.score]);
+  const noSignalNote = useMemo(() => buildNoSignalNote(diagnostics, cooldownLabel), [diagnostics, cooldownLabel]);
+  const gateLabel = (lastSignal?.gateMode ?? gateMode ?? 'default').toString();
+
+  const risk = useMemo(() => {
+    if (!lastSignal) return null;
+    const entry = lastSignal.entry;
+    const stop = lastSignal.stop;
+    if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(stop)) return null;
+    const stopDist = Math.abs(entry - stop);
+    if (!Number.isFinite(stopDist) || stopDist <= 0) return null;
+    const riskUsd = (Number.isFinite(accountUsd) ? accountUsd : 0) * 0.01;
+    const qty = riskUsd > 0 ? riskUsd / stopDist : 0;
+    return { riskUsd, qty, asset: baseAssetSymbol(symbol) };
+  }, [accountUsd, lastSignal, symbol]);
+
+  return (
+    <div>
+      <div className="border border-slate-800 rounded bg-slate-900/20 p-2">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <div className="text-xs text-slate-400">
+              {symbol} {timeframe}
+            </div>
+            <div className={clsx('text-sm font-semibold mt-0.5', lastSignal ? (lastSignal.side === 'long' ? 'text-bull' : 'text-bear') : 'text-slate-300')}>
+              {lastSignal ? lastSignal.side.toUpperCase() : 'No signal'}
+            </div>
+          </div>
+          <div className="text-right">
+            {lastSignal ? (
+              <>
+                <div className="text-[11px] text-slate-500">{ageLabel(lastSignal.timestamp)} ago</div>
+                <span className={clsx('text-[11px] px-2 py-0.5 rounded border inline-block mt-1', confidenceToneClass(confidence.level))}>
+                  Confidence {confidence.label}
+                </span>
+              </>
+            ) : (
+              <div className="text-[11px] text-slate-500">No signal</div>
+            )}
+          </div>
+        </div>
+
+        {lastSignal ? (
+          <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+            <Metric label="Entry" value={fmtPrice(lastSignal.entry)} />
+            <Metric label="Stop" value={fmtPrice(lastSignal.stop)} />
+            <Metric label="TP" value={fmtPrice(lastSignal.tp1)} />
+            <Metric label="Risk" value={Number.isFinite(stopPct) ? `${stopPct.toFixed(2)}%` : '-'} />
+          </div>
+        ) : (
+          <div className="mt-2 text-xs text-slate-500">{noSignalNote}</div>
+        )}
+      </div>
+
+      {!lastSignal ? (
+        <div className="mt-3 border border-slate-800 rounded bg-slate-900/20 p-2">
+          <div className="text-xs uppercase text-slate-500">What to do now</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setShowWhyNot(false)}
+              className="px-2 py-1 rounded text-[11px] border border-slate-800 bg-slate-900 text-slate-200 hover:border-slate-600"
+            >
+              Wait for signal
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowWhyNot(true)}
+              className="px-2 py-1 rounded text-[11px] border border-slate-800 bg-slate-900 text-slate-200 hover:border-slate-600"
+            >
+              See why no signal
+            </button>
+            <button
+              type="button"
+              onClick={() => onSetTimeframe('15m')}
+              className="px-2 py-1 rounded text-[11px] border border-slate-800 bg-slate-900 text-slate-200 hover:border-slate-600"
+            >
+              Switch to 15m
+            </button>
+          </div>
+          {showWhyNot ? (
+            <div className="mt-2 text-xs text-slate-300">
+              {whyNot.length ? (
+                <ul className="list-disc list-inside space-y-1">
+                  {whyNot.map((r, i) => (
+                    <li key={`${i}-${r}`}>{r}</li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-slate-500">No details yet.</div>
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="mt-3 border border-slate-800 rounded bg-slate-900/20 p-2">
+        <div className="text-xs uppercase text-slate-500">Auto risk</div>
+        <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] text-slate-400">Account (USD)</span>
+            <input
+              type="number"
+              className="w-full bg-slate-900/50 border border-slate-800 rounded px-2 py-1 text-slate-100"
+              value={accountUsd}
+              onChange={(e) => setAccountUsd(Number(e.target.value))}
+              min={0}
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] text-slate-400">Risk</span>
+            <div className="bg-slate-900/50 border border-slate-800 rounded px-2 py-1 text-slate-100">1%</div>
+          </div>
+        </div>
+        <div className="mt-2 text-xs text-slate-400">
+          {risk
+            ? `If your account is ${formatUsd(accountUsd)} USD, suggested size: ${formatQty(risk.qty)} ${risk.asset}`
+            : 'You need a signal to calculate risk.'}
+        </div>
+      </div>
+
+      <div className="mt-3">
+        <h4 className="text-xs uppercase text-slate-500 mb-1">Quick context</h4>
+        <div className="grid grid-cols-2 gap-2">
+          <Metric label="ATR%" value={Number.isFinite(diagnostics?.atrPct) ? `${diagnostics!.atrPct!.toFixed(2)}%` : '-'} hint="volatility" />
+          <Metric label="ADX" value={Number.isFinite(diagnostics?.adx) ? diagnostics!.adx!.toFixed(2) : '-'} hint="trend strength" />
+          <Metric label="Gate" value={gateLabel} hint="quality filter" />
+          <Metric label="Trend" value={diagnostics?.trend ? diagnostics.trend : '-'} hint="direction" />
         </div>
       </div>
     </div>
@@ -862,10 +1057,13 @@ function VipUpsell() {
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="flex flex-col bg-slate-900/40 border border-slate-800 rounded px-2 py-1">
-      <span className="text-[11px] text-slate-400">{label}</span>
+      <span className="text-[11px] text-slate-400">
+        {label}
+        {hint ? <span className="text-[10px] text-slate-500"> ({hint})</span> : null}
+      </span>
       <span className="text-slate-100">{value}</span>
     </div>
   );
@@ -971,6 +1169,44 @@ function signed(value: number, decimals = 2): string {
   return `${sign}${value.toFixed(decimals)}`;
 }
 
+type ConfidenceLevel = 'low' | 'medium' | 'high' | 'unknown';
+
+function confidenceFromScore(score?: number): { label: string; level: ConfidenceLevel } {
+  if (!Number.isFinite(score)) return { label: '-', level: 'unknown' };
+  if (score >= 90) return { label: 'High', level: 'high' };
+  if (score >= 80) return { label: 'Medium', level: 'medium' };
+  return { label: 'Low', level: 'low' };
+}
+
+function confidenceToneClass(level: ConfidenceLevel): string {
+  if (level === 'high') return 'text-bull border-emerald-900/60 bg-emerald-950/20';
+  if (level === 'medium') return 'text-amber-200 border-amber-900/60 bg-amber-950/20';
+  if (level === 'low') return 'text-bear border-rose-900/60 bg-rose-950/20';
+  return 'text-slate-300 border-slate-800 bg-slate-900/30';
+}
+
+function formatUsd(value: number): string {
+  if (!Number.isFinite(value)) return '-';
+  try {
+    return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value);
+  } catch {
+    return value.toFixed(2);
+  }
+}
+
+function formatQty(value: number): string {
+  if (!Number.isFinite(value)) return '-';
+  const abs = Math.abs(value);
+  const decimals = abs >= 100 ? 2 : abs >= 1 ? 4 : abs >= 0.01 ? 6 : 8;
+  return value.toFixed(decimals);
+}
+
+function baseAssetSymbol(symbol: string): string {
+  if (symbol.endsWith('USDT')) return symbol.slice(0, -4);
+  if (symbol.endsWith('USD')) return symbol.slice(0, -3);
+  return symbol;
+}
+
 type FuturesInsightTone = 'bullish' | 'bearish' | 'neutral' | 'squeeze';
 type FuturesInsight = { label: string; tone: FuturesInsightTone; bullets: string[] };
 
@@ -1050,6 +1286,34 @@ function formatCooldown(cooldownSecs?: number): string {
   if (s < 60) return `${Math.ceil(s)}s`;
   const m = Math.ceil(s / 60);
   return `${m}m`;
+}
+
+function buildNoSignalNote(
+  diagnostics?: { trend?: string; rangePos?: number; cooldownSecs?: number },
+  cooldownLabel?: string
+): string {
+  if (diagnostics?.cooldownSecs && diagnostics.cooldownSecs > 0) {
+    const label = cooldownLabel && cooldownLabel !== '0' ? cooldownLabel : 'active';
+    return `Cooldown active (${label}).`;
+  }
+  const trend = diagnostics?.trend;
+  const rangePos = diagnostics?.rangePos;
+  if (trend === 'up') {
+    if (Number.isFinite(rangePos)) {
+      if (rangePos! > 0.7) return 'Uptrend, waiting for pullback to zone.';
+      if (rangePos! < 0.3) return 'Uptrend, waiting for breakout.';
+    }
+    return 'Uptrend, waiting for confirmation.';
+  }
+  if (trend === 'down') {
+    if (Number.isFinite(rangePos)) {
+      if (rangePos! < 0.3) return 'Downtrend, waiting for pullback to zone.';
+      if (rangePos! > 0.7) return 'Downtrend, waiting for breakdown.';
+    }
+    return 'Downtrend, waiting for confirmation.';
+  }
+  if (trend === 'neutral') return 'Sideways market, waiting for breakout.';
+  return 'No signal: waiting for gate conditions.';
 }
 
 function formatCompact(value: number): string {
